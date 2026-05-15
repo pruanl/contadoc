@@ -31,6 +31,7 @@ Route::middleware('auth')->group(function () {
     Route::view('/como-enviar', 'send-instructions')->name('send-instructions');
     Route::resource('clients', ClientController::class);
     Route::resource('authorized-senders', AuthorizedSenderController::class)->except(['show']);
+    Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->name('documents.file');
     Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->name('documents.download');
     Route::resource('documents', DocumentController::class);
     Route::get('/whatsapp', [WhatsappConnectionController::class, 'show'])->middleware('can:admin')->name('whatsapp.show');

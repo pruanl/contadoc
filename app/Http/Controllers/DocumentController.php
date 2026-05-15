@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\HeaderUtils;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class DocumentController extends Controller
@@ -72,7 +73,10 @@ class DocumentController extends Controller
 
         $document->load(['client', 'whatsappMessage']);
 
-        return view('documents.show', compact('document'));
+        return view('documents.show', [
+            'document' => $document,
+            'preview' => $this->previewFor($document),
+        ]);
     }
 
     public function edit(Document $document): View
@@ -123,6 +127,29 @@ class DocumentController extends Controller
         return Storage::disk('local')->download($document->file_path, $document->original_name);
     }
 
+    public function file(Document $document): StreamedResponse
+    {
+        $this->authorizeDocument($document);
+
+        abort_unless($document->file_path && Storage::disk('local')->exists($document->file_path), 404);
+
+        $stream = Storage::disk('local')->readStream($document->file_path);
+        abort_unless(is_resource($stream), 404);
+
+        return response()->stream(function () use ($stream): void {
+            fpassthru($stream);
+            fclose($stream);
+        }, 200, [
+            'Content-Type' => $this->contentTypeFor($document),
+            'Content-Length' => (string) Storage::disk('local')->size($document->file_path),
+            'Content-Disposition' => HeaderUtils::makeDisposition(
+                HeaderUtils::DISPOSITION_INLINE,
+                $document->original_name ?: basename($document->file_path)
+            ),
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
     private function clientsForUser()
     {
         return Client::query()
@@ -134,5 +161,42 @@ class DocumentController extends Controller
     private function authorizeDocument(Document $document): void
     {
         abort_unless(Auth::user()->isAdmin() || $document->user_id === Auth::id(), 403);
+    }
+
+    private function previewFor(Document $document): ?array
+    {
+        if (! $document->file_path || ! Storage::disk('local')->exists($document->file_path)) {
+            return null;
+        }
+
+        $mime = $this->contentTypeFor($document);
+        $extension = $this->extensionFor($document);
+
+        $kind = match (true) {
+            str_starts_with($mime, 'image/') || in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'], true) => 'image',
+            $mime === 'application/pdf' || $extension === 'pdf' => 'frame',
+            str_starts_with($mime, 'text/') || in_array($extension, ['txt', 'csv', 'log', 'json', 'xml'], true) => 'frame',
+            default => null,
+        };
+
+        return $kind ? [
+            'kind' => $kind,
+            'url' => route('documents.file', $document),
+            'mime' => $mime,
+            'extension' => $extension,
+        ] : null;
+    }
+
+    private function contentTypeFor(Document $document): string
+    {
+        return $document->mime_type
+            ?: (Storage::disk('local')->mimeType($document->file_path) ?: 'application/octet-stream');
+    }
+
+    private function extensionFor(Document $document): string
+    {
+        $name = $document->original_name ?: $document->file_path ?: '';
+
+        return strtolower(pathinfo($name, PATHINFO_EXTENSION));
     }
 }
