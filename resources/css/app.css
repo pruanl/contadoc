@@ -1,0 +1,191 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+@theme {
+    --font-sans: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+@layer base {
+    :root {
+        --background: 0 0% 100%;
+        --foreground: 240 10% 3.9%;
+        --card: 0 0% 100%;
+        --card-foreground: 240 10% 3.9%;
+        --muted: 240 4.8% 95.9%;
+        --muted-foreground: 240 3.8% 46.1%;
+        --border: 240 5.9% 90%;
+        --input: 240 5.9% 90%;
+        --primary: 240 5.9% 10%;
+        --primary-foreground: 0 0% 98%;
+        --accent: 173 80% 40%;
+        --accent-foreground: 180 100% 10%;
+        --ring: 240 5.9% 10%;
+        --radius: 0.5rem;
+    }
+
+    body {
+        background:
+            radial-gradient(circle at top left, hsl(173 80% 94%) 0, transparent 28rem),
+            linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(240 4.8% 97%) 100%);
+    }
+
+    input,
+    select,
+    textarea {
+        border-color: hsl(var(--input));
+        border-radius: calc(var(--radius) - 2px);
+        background: hsl(var(--background));
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+        border-color: hsl(var(--ring));
+        box-shadow: 0 0 0 3px hsl(var(--ring) / 0.12);
+        outline: none;
+    }
+}
+
+@layer components {
+    .ui-shell {
+        min-height: 100vh;
+        color: hsl(var(--foreground));
+    }
+
+    .ui-sidebar {
+        border-color: hsl(var(--border));
+        background: hsl(var(--card) / 0.86);
+        backdrop-filter: blur(16px);
+    }
+
+    .ui-card {
+        border: 1px solid hsl(var(--border));
+        border-radius: var(--radius);
+        background: hsl(var(--card) / 0.92);
+        box-shadow: 0 1px 2px hsl(240 10% 3.9% / 0.04), 0 20px 50px hsl(240 10% 3.9% / 0.03);
+    }
+
+    .ui-card-header {
+        border-bottom: 1px solid hsl(var(--border));
+        padding: 1rem 1.25rem;
+    }
+
+    .ui-card-body {
+        padding: 1.25rem;
+    }
+
+    .ui-button {
+        display: inline-flex;
+        min-height: 2.5rem;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        border-radius: calc(var(--radius) - 2px);
+        padding: 0.5rem 1rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .ui-button:focus-visible {
+        box-shadow: 0 0 0 3px hsl(var(--ring) / 0.16);
+        outline: none;
+    }
+
+    .ui-button-primary {
+        background: hsl(var(--primary));
+        color: hsl(var(--primary-foreground));
+    }
+
+    .ui-button-primary:hover {
+        background: hsl(240 5.9% 16%);
+    }
+
+    .ui-button-secondary {
+        border: 1px solid hsl(var(--border));
+        background: hsl(var(--background));
+        color: hsl(var(--foreground));
+    }
+
+    .ui-button-secondary:hover {
+        background: hsl(var(--muted));
+    }
+
+    .ui-button-danger {
+        border: 1px solid hsl(0 72% 88%);
+        background: hsl(0 86% 97%);
+        color: hsl(0 72% 38%);
+    }
+
+    .ui-button-danger:hover {
+        background: hsl(0 86% 94%);
+    }
+
+    .ui-input {
+        min-height: 2.5rem;
+        width: 100%;
+        border: 1px solid hsl(var(--input));
+        border-radius: calc(var(--radius) - 2px);
+        background: hsl(var(--background));
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+        box-shadow: 0 1px 2px hsl(240 10% 3.9% / 0.03);
+    }
+
+    .ui-label {
+        display: block;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: hsl(var(--foreground));
+    }
+
+    .ui-muted {
+        color: hsl(var(--muted-foreground));
+    }
+
+    .ui-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.875rem;
+    }
+
+    .ui-table thead {
+        background: hsl(var(--muted) / 0.64);
+        color: hsl(var(--muted-foreground));
+        text-align: left;
+    }
+
+    .ui-table th {
+        padding: 0.75rem 1rem;
+        font-weight: 500;
+    }
+
+    .ui-table td {
+        border-top: 1px solid hsl(var(--border));
+        padding: 0.875rem 1rem;
+        vertical-align: middle;
+    }
+
+    .ui-nav-link {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        border-radius: calc(var(--radius) - 2px);
+        padding: 0.625rem 0.75rem;
+        color: hsl(var(--muted-foreground));
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    .ui-nav-link:hover,
+    .ui-nav-link-active {
+        background: hsl(var(--muted));
+        color: hsl(var(--foreground));
+    }
+}
