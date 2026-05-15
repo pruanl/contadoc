@@ -251,6 +251,20 @@ class EvolutionWebhookTest extends TestCase
         ]);
     }
 
+    public function test_webhook_accepts_event_suffix_appended_to_secret_query(): void
+    {
+        $user = User::factory()->create();
+        $this->authorizeSender($user, '5585988887777');
+
+        $this->postJson('/webhooks/evolution?secret=testing-secret/messages-upsert', $this->payload('5585988887777'))
+            ->assertOk();
+
+        $this->assertDatabaseHas('webhook_events', [
+            'event_type' => 'messages.upsert',
+            'status' => 'processed',
+        ]);
+    }
+
     private function payload(string $phone, string $text = 'Segue documento.'): array
     {
         return [
