@@ -40,6 +40,8 @@ return [
         'key' => env('EVOLUTION_API_KEY'),
         'instance' => env('EVOLUTION_INSTANCE_NAME', 'contadoc-local'),
         'webhook_secret' => env('EVOLUTION_WEBHOOK_SECRET'),
+        'webhook_debug' => env('CONTADOC_WEBHOOK_DEBUG', false),
+        'webhook_sync' => env('CONTADOC_WEBHOOK_SYNC', false),
         'official_phone' => env('CONTADOC_OFFICIAL_WHATSAPP'),
     ],
 

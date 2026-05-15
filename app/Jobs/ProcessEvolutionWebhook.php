@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
@@ -40,11 +41,27 @@ class ProcessEvolutionWebhook implements ShouldQueue
             $phoneVariants = Client::phoneVariants($phone);
             $body = $this->text($messagePayload);
 
+            $this->debugLog('info', 'Webhook job started.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'event_type' => $this->webhookEvent->event_type,
+                'instance' => Arr::get($payload, 'instance'),
+                'message_id' => Arr::get($payload, 'data.key.id'),
+                'remote_jid' => $remoteJid,
+                'normalized_phone' => $phone,
+                'phone_variants' => $phoneVariants,
+                'message_type' => Arr::get($payload, 'data.messageType'),
+            ]);
+
             if ($phone === '') {
                 $this->webhookEvent->update([
                     'status' => 'ignored',
                     'error' => 'Remote phone not found in payload.',
                     'processed_at' => now(),
+                ]);
+
+                $this->debugLog('warning', 'Webhook ignored: remote phone not found.', [
+                    'webhook_event_id' => $this->webhookEvent->id,
+                    'message_id' => Arr::get($payload, 'data.key.id'),
                 ]);
 
                 return;
@@ -62,10 +79,25 @@ class ProcessEvolutionWebhook implements ShouldQueue
                     'processed_at' => now(),
                 ]);
 
+                $this->debugLog('warning', 'Webhook ignored: sender not authorized.', [
+                    'webhook_event_id' => $this->webhookEvent->id,
+                    'normalized_phone' => $phone,
+                    'phone_variants' => $phoneVariants,
+                ]);
+
                 return;
             }
 
             [$client, $clientHint, $matchConfidence] = $this->resolveClient($body, $sender->user_id);
+
+            $this->debugLog('info', 'Webhook sender resolved.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'authorized_sender_id' => $sender->id,
+                'user_id' => $sender->user_id,
+                'client_id' => $client?->id,
+                'client_hint' => $clientHint,
+                'match_confidence' => $matchConfidence,
+            ]);
 
             $message = WhatsappMessage::create([
                 'client_id' => $client?->id,
@@ -80,6 +112,11 @@ class ProcessEvolutionWebhook implements ShouldQueue
 
             if ($media = $this->media($payload, $messagePayload)) {
                 $this->storeDocument($client, $message, $media, $evolution, $sender, $clientHint, $matchConfidence, $payload);
+            } else {
+                $this->debugLog('info', 'Webhook message has no media.', [
+                    'webhook_event_id' => $this->webhookEvent->id,
+                    'whatsapp_message_id' => $message->id,
+                ]);
             }
 
             $this->webhookEvent->update([
@@ -87,11 +124,22 @@ class ProcessEvolutionWebhook implements ShouldQueue
                 'error' => null,
                 'processed_at' => now(),
             ]);
+
+            $this->debugLog('info', 'Webhook job processed.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'whatsapp_message_id' => $message->id,
+            ]);
         } catch (Throwable $exception) {
             $this->webhookEvent->update([
                 'status' => 'failed',
                 'error' => $exception->getMessage(),
                 'processed_at' => now(),
+            ]);
+
+            $this->debugLog('error', 'Webhook job failed.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'exception' => $exception::class,
+                'message' => $exception->getMessage(),
             ]);
 
             throw $exception;
@@ -214,6 +262,18 @@ class ProcessEvolutionWebhook implements ShouldQueue
         $mime = $media['mimetype'] ?? $media['mimeType'] ?? null;
         $binary = null;
 
+        $this->debugLog('info', 'Webhook media detected.', [
+            'webhook_event_id' => $this->webhookEvent->id,
+            'whatsapp_message_id' => $message->id,
+            'media_type' => $media['media_type'] ?? null,
+            'mimetype' => $mime,
+            'has_inline_base64' => ! empty($media['base64']),
+            'has_url' => ! empty($media['url']),
+            'has_media_url' => ! empty($media['mediaUrl']),
+            'is_encrypted_url' => ! empty($media['url']) && $this->isEncryptedWhatsappMediaUrl((string) $media['url']),
+            'evolution_url_configured' => (bool) config('services.evolution.url'),
+        ]);
+
         if (! empty($media['base64'])) {
             $binary = $this->decodeBase64((string) $media['base64']);
         } elseif (! empty($media['url']) && ! $this->isEncryptedWhatsappMediaUrl((string) $media['url'])) {
@@ -236,7 +296,7 @@ class ProcessEvolutionWebhook implements ShouldQueue
             $size = strlen($binary);
         }
 
-        Document::create([
+        $document = Document::create([
             'client_id' => $client?->id,
             'user_id' => $sender->user_id,
             'whatsapp_message_id' => $message->id,
@@ -251,6 +311,19 @@ class ProcessEvolutionWebhook implements ShouldQueue
             'match_confidence' => $matchConfidence,
             'received_at' => $message->message_at ?? now(),
         ]);
+
+        $this->debugLog('info', 'Webhook document stored.', [
+            'webhook_event_id' => $this->webhookEvent->id,
+            'document_id' => $document->id,
+            'client_id' => $document->client_id,
+            'user_id' => $document->user_id,
+            'file_path' => $document->file_path,
+            'file_exists' => $document->file_path ? Storage::disk('local')->exists($document->file_path) : false,
+            'original_name' => $document->original_name,
+            'mime_type' => $document->mime_type,
+            'size' => $document->size,
+            'status' => $document->status,
+        ]);
     }
 
     private function isEncryptedWhatsappMediaUrl(string $url): bool
@@ -261,8 +334,27 @@ class ProcessEvolutionWebhook implements ShouldQueue
     private function fetchMediaBase64(EvolutionApiService $evolution, array $payload): ?array
     {
         try {
-            return $evolution->mediaBase64((array) Arr::get($payload, 'data', $payload), Arr::get($payload, 'instance'));
-        } catch (Throwable) {
+            $result = $evolution->mediaBase64((array) Arr::get($payload, 'data', $payload), Arr::get($payload, 'instance'));
+
+            $this->debugLog($result ? 'info' : 'warning', 'Evolution media base64 lookup finished.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'message_id' => Arr::get($payload, 'data.key.id'),
+                'has_result' => (bool) $result,
+                'file_name' => $result['fileName'] ?? null,
+                'mimetype' => $result['mimetype'] ?? null,
+                'media_type' => $result['mediaType'] ?? null,
+                'size' => $result['size'] ?? null,
+            ]);
+
+            return $result;
+        } catch (Throwable $exception) {
+            $this->debugLog('error', 'Evolution media base64 lookup failed.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'message_id' => Arr::get($payload, 'data.key.id'),
+                'exception' => $exception::class,
+                'message' => $exception->getMessage(),
+            ]);
+
             return null;
         }
     }
@@ -325,5 +417,14 @@ class ProcessEvolutionWebhook implements ShouldQueue
         }
 
         return null;
+    }
+
+    private function debugLog(string $level, string $message, array $context = []): void
+    {
+        if (! config('services.evolution.webhook_debug')) {
+            return;
+        }
+
+        Log::log($level, '[contadoc-webhook] '.$message, $context);
     }
 }
