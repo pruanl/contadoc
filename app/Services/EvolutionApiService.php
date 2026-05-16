@@ -46,6 +46,18 @@ class EvolutionApiService
             ->json() ?? [];
     }
 
+    public function sendText(string $number, string $text, ?string $instance = null): array
+    {
+        return $this->request()
+            ->post($this->endpoint('/message/sendText/'.$this->instance($instance)), [
+                'number' => $number,
+                'text' => $text,
+                'linkPreview' => true,
+            ])
+            ->throw()
+            ->json() ?? [];
+    }
+
     public function download(string $url): string
     {
         $response = $this->request()->get($url);

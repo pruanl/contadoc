@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Client;
 use App\Models\AuthorizedSender;
+use App\Models\ClientWhatsappLink;
 use App\Models\Document;
 use App\Models\User;
 use App\Models\WebhookEvent;
@@ -19,6 +20,123 @@ class EvolutionWebhookTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_client_whatsapp_activation_creates_pending_link_and_sends_invite(): void
+    {
+        Http::fake([
+            'https://evolution.test/message/sendText/contadoc-local' => Http::response([
+                'key' => ['remoteJid' => '5585988887777@s.whatsapp.net', 'id' => 'sent-id'],
+                'status' => 'PENDING',
+            ], 201),
+        ]);
+        config([
+            'services.evolution.url' => 'https://evolution.test',
+            'services.evolution.instance' => 'contadoc-local',
+        ]);
+
+        $user = User::factory()->create(['name' => 'Escritorio Alfa']);
+        $client = Client::create([
+            'user_id' => $user->id,
+            'name' => 'Empresa Azul',
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => Client::STATUS_ACTIVE,
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('clients.activate-whatsapp', $client))
+            ->assertRedirect(route('clients.show', $client));
+
+        $this->assertDatabaseHas('client_whatsapp_links', [
+            'user_id' => $user->id,
+            'client_id' => $client->id,
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => ClientWhatsappLink::STATUS_PENDING,
+        ]);
+
+        Http::assertSent(function (Request $request) {
+            return $request->url() === 'https://evolution.test/message/sendText/contadoc-local'
+                && $request['number'] === '5585988887777'
+                && $request['text'] === 'O Escritorio Escritorio Alfa deseja cadastrar voce para envio de documentos. Para aceitar, responda Sim.';
+        });
+    }
+
+    public function test_client_whatsapp_activation_reuses_pending_link(): void
+    {
+        Http::fake([
+            'https://evolution.test/message/sendText/contadoc-local' => Http::response(['status' => 'PENDING'], 201),
+        ]);
+        config([
+            'services.evolution.url' => 'https://evolution.test',
+            'services.evolution.instance' => 'contadoc-local',
+        ]);
+
+        $user = User::factory()->create();
+        $client = Client::create([
+            'user_id' => $user->id,
+            'name' => 'Empresa Azul',
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => Client::STATUS_ACTIVE,
+        ]);
+
+        ClientWhatsappLink::create([
+            'user_id' => $user->id,
+            'client_id' => $client->id,
+            'phone' => $client->phone,
+            'normalized_phone' => $client->normalized_phone,
+            'status' => ClientWhatsappLink::STATUS_PENDING,
+            'requested_at' => now()->subDay(),
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('clients.activate-whatsapp', $client))
+            ->assertRedirect(route('clients.show', $client));
+
+        $this->assertSame(1, ClientWhatsappLink::count());
+        $this->assertNotNull(ClientWhatsappLink::first()->last_invite_sent_at);
+    }
+
+    public function test_client_whatsapp_activation_blocks_phone_linked_to_another_office(): void
+    {
+        Http::fake();
+
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $client = Client::create([
+            'user_id' => $user->id,
+            'name' => 'Empresa Azul',
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => Client::STATUS_ACTIVE,
+        ]);
+        $otherClient = Client::create([
+            'user_id' => $otherUser->id,
+            'name' => 'Empresa Verde',
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => Client::STATUS_ACTIVE,
+        ]);
+
+        ClientWhatsappLink::create([
+            'user_id' => $otherUser->id,
+            'client_id' => $otherClient->id,
+            'phone' => $otherClient->phone,
+            'normalized_phone' => $otherClient->normalized_phone,
+            'status' => ClientWhatsappLink::STATUS_ACTIVE,
+            'requested_at' => now(),
+            'accepted_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('clients.show', $client))
+            ->post(route('clients.activate-whatsapp', $client))
+            ->assertRedirect(route('clients.show', $client))
+            ->assertSessionHasErrors('phone');
+
+        Http::assertNothingSent();
+    }
+
     public function test_webhook_ignores_unauthorized_sender(): void
     {
         $this->postJson(route('webhooks.evolution'), $this->payload('5585988887777'), [
@@ -33,6 +151,77 @@ class EvolutionWebhookTest extends TestCase
         ]);
     }
 
+    public function test_webhook_accepts_pending_client_link_with_yes_variants(): void
+    {
+        $user = User::factory()->create();
+        $client = Client::create([
+            'user_id' => $user->id,
+            'name' => 'Empresa Azul',
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => Client::STATUS_ACTIVE,
+        ]);
+        $link = ClientWhatsappLink::create([
+            'user_id' => $user->id,
+            'client_id' => $client->id,
+            'phone' => $client->phone,
+            'normalized_phone' => $client->normalized_phone,
+            'status' => ClientWhatsappLink::STATUS_PENDING,
+            'requested_at' => now(),
+        ]);
+
+        foreach (['Sim', 's', 'YES'] as $index => $answer) {
+            $link->update(['status' => ClientWhatsappLink::STATUS_PENDING, 'accepted_at' => null]);
+
+            $payload = $this->payload('5585988887777', $answer);
+            $payload['data']['key']['id'] = 'acceptance-'.$index;
+
+            $this->postJson(route('webhooks.evolution'), $payload, [
+                'X-Evolution-Webhook-Secret' => 'testing-secret',
+            ])->assertOk();
+
+            $this->assertSame(ClientWhatsappLink::STATUS_ACTIVE, $link->refresh()->status);
+            $this->assertNotNull($link->accepted_at);
+        }
+
+        $this->assertDatabaseHas('whatsapp_messages', [
+            'client_id' => $client->id,
+            'user_id' => $user->id,
+            'remote_phone' => '5585988887777',
+            'body' => 'YES',
+        ]);
+    }
+
+    public function test_webhook_does_not_accept_pending_client_link_with_other_text(): void
+    {
+        $user = User::factory()->create();
+        $client = Client::create([
+            'user_id' => $user->id,
+            'name' => 'Empresa Azul',
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => Client::STATUS_ACTIVE,
+        ]);
+        $link = ClientWhatsappLink::create([
+            'user_id' => $user->id,
+            'client_id' => $client->id,
+            'phone' => $client->phone,
+            'normalized_phone' => $client->normalized_phone,
+            'status' => ClientWhatsappLink::STATUS_PENDING,
+            'requested_at' => now(),
+        ]);
+
+        $this->postJson(route('webhooks.evolution'), $this->payload('5585988887777', 'nao'), [
+            'X-Evolution-Webhook-Secret' => 'testing-secret',
+        ])->assertOk();
+
+        $this->assertSame(ClientWhatsappLink::STATUS_PENDING, $link->refresh()->status);
+        $this->assertSame(0, WhatsappMessage::count());
+        $this->assertDatabaseHas('webhook_events', [
+            'status' => 'ignored',
+        ]);
+    }
+
     public function test_webhook_with_client_command_links_existing_client(): void
     {
         $user = User::factory()->create();
@@ -41,7 +230,7 @@ class EvolutionWebhookTest extends TestCase
         $client = Client::create([
             'user_id' => $user->id,
             'name' => 'Empresa Azul',
-            'phone' => '(85) 98888-7777',
+            'phone' => '5585988887777',
             'normalized_phone' => '5585988887777',
             'status' => Client::STATUS_ACTIVE,
         ]);
@@ -101,6 +290,59 @@ class EvolutionWebhookTest extends TestCase
         $this->assertStringStartsWith('users/'.$user->storageFolder().'/documents/', $document->file_path);
         $this->assertTrue(Str::isUuid(pathinfo($document->file_path, PATHINFO_FILENAME)));
         $this->assertSame('pdf', pathinfo($document->file_path, PATHINFO_EXTENSION));
+        Storage::disk('local')->assertExists($document->file_path);
+    }
+
+    public function test_webhook_with_active_client_link_stores_document_for_client(): void
+    {
+        Storage::fake('local');
+
+        $user = User::factory()->create();
+        $client = Client::create([
+            'user_id' => $user->id,
+            'name' => 'Empresa Azul',
+            'phone' => '5585988887777',
+            'normalized_phone' => '5585988887777',
+            'status' => Client::STATUS_ACTIVE,
+        ]);
+        ClientWhatsappLink::create([
+            'user_id' => $user->id,
+            'client_id' => $client->id,
+            'phone' => $client->phone,
+            'normalized_phone' => $client->normalized_phone,
+            'status' => ClientWhatsappLink::STATUS_ACTIVE,
+            'requested_at' => now(),
+            'accepted_at' => now(),
+        ]);
+
+        $payload = $this->payload('5585988887777', 'Segue arquivo');
+        $payload['data']['message']['documentMessage'] = [
+            'fileName' => 'nota.pdf',
+            'mimetype' => 'application/pdf',
+            'base64' => base64_encode('pdf-content'),
+        ];
+
+        $this->postJson(route('webhooks.evolution'), $payload, [
+            'X-Evolution-Webhook-Secret' => 'testing-secret',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('whatsapp_messages', [
+            'client_id' => $client->id,
+            'user_id' => $user->id,
+            'remote_phone' => '5585988887777',
+            'body' => 'Segue arquivo',
+        ]);
+
+        $document = Document::first();
+
+        $this->assertNotNull($document);
+        $this->assertSame($client->id, $document->client_id);
+        $this->assertSame($user->id, $document->user_id);
+        $this->assertSame('new', $document->status);
+        $this->assertSame('client_whatsapp', $document->origin);
+        $this->assertSame('5585988887777', $document->sender_phone);
+        $this->assertSame('Empresa Azul', $document->client_hint);
+        $this->assertEquals(100, $document->match_confidence);
         Storage::disk('local')->assertExists($document->file_path);
     }
 

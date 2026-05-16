@@ -1,7 +1,24 @@
 <x-layouts.app :title="$client->name" :header="$client->name">
+    @php
+        $whatsappLink = $client->activeWhatsappLink ?? $client->pendingWhatsappLink;
+        $whatsappStatus = $whatsappLink?->status ?? 'inactive';
+        $whatsappStatusLabel = [
+            'active' => 'Ativo',
+            'pending' => 'Convite enviado',
+            'revoked' => 'Revogado',
+            'inactive' => 'Nao ativado',
+        ][$whatsappStatus] ?? $whatsappStatus;
+    @endphp
+
     <div class="mb-4 flex items-center justify-between">
         <x-status-badge :status="$client->status" />
         <div class="flex gap-2">
+            @if ($whatsappStatus !== 'active')
+                <form method="POST" action="{{ route('clients.activate-whatsapp', $client) }}">
+                    @csrf
+                    <button class="ui-button ui-button-primary">Ativar envios</button>
+                </form>
+            @endif
             <a href="{{ route('clients.edit', $client) }}" class="ui-button ui-button-secondary">Editar</a>
             <form method="POST" action="{{ route('clients.destroy', $client) }}" onsubmit="return confirm('Remover este cliente?')">
                 @csrf
@@ -16,6 +33,15 @@
             <h2 class="font-semibold">Dados</h2>
             <dl class="mt-4 space-y-3 text-sm">
                 <div><dt class="text-zinc-500">Telefone</dt><dd>{{ $client->phone }}</dd></div>
+                <div>
+                    <dt class="text-zinc-500">Envio direto</dt>
+                    <dd>
+                        <x-status-badge :status="$whatsappStatus">{{ $whatsappStatusLabel }}</x-status-badge>
+                        @if ($whatsappLink?->last_invite_sent_at)
+                            <span class="ml-2 text-xs text-zinc-500">convite em {{ $whatsappLink->last_invite_sent_at->format('d/m/Y H:i') }}</span>
+                        @endif
+                    </dd>
+                </div>
                 <div><dt class="text-zinc-500">Email</dt><dd>{{ $client->email ?: '-' }}</dd></div>
                 <div><dt class="text-zinc-500">CPF/CNPJ</dt><dd>{{ $client->tax_document ?: '-' }}</dd></div>
                 <div><dt class="text-zinc-500">Observacoes</dt><dd class="whitespace-pre-line">{{ $client->notes ?: '-' }}</dd></div>

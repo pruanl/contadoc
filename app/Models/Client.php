@@ -58,4 +58,23 @@ class Client extends Model
     {
         return $this->hasMany(WhatsappMessage::class);
     }
+
+    public function whatsappLinks(): HasMany
+    {
+        return $this->hasMany(ClientWhatsappLink::class);
+    }
+
+    public function activeWhatsappLink()
+    {
+        return $this->hasOne(ClientWhatsappLink::class)
+            ->where('status', ClientWhatsappLink::STATUS_ACTIVE)
+            ->latestOfMany();
+    }
+
+    public function pendingWhatsappLink()
+    {
+        return $this->hasOne(ClientWhatsappLink::class)
+            ->where('status', ClientWhatsappLink::STATUS_PENDING)
+            ->latestOfMany();
+    }
 }

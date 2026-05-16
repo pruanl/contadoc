@@ -20,6 +20,24 @@
         </section>
 
         <section class="ui-card ui-card-body lg:col-span-2">
+            <h2 class="font-semibold">Enviar mensagem</h2>
+            <p class="mt-1 text-sm ui-muted">Dispare uma mensagem de texto usando a instancia oficial configurada na Evolution.</p>
+
+            <form method="POST" action="{{ route('whatsapp.send') }}" class="mt-5 space-y-4">
+                @csrf
+                <label class="ui-label">
+                    Telefone
+                    <input name="number" value="{{ old('number') }}" required class="ui-input mt-1" placeholder="Ex: 5585999999999">
+                </label>
+                <label class="ui-label">
+                    Mensagem
+                    <textarea name="text" rows="5" required class="ui-input mt-1" placeholder="Digite a mensagem">{{ old('text') }}</textarea>
+                </label>
+                <button class="ui-button ui-button-primary">Enviar pela Evolution</button>
+            </form>
+        </section>
+
+        <section class="ui-card ui-card-body lg:col-span-2">
             <h2 class="font-semibold">Evolution API</h2>
             @php
                 $webhookUrl = rtrim(config('app.url'), '/').'/webhooks/evolution';

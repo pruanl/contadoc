@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Client;
+use App\Models\ClientWhatsappLink;
+use App\Services\EvolutionApiService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -14,6 +16,7 @@ class ClientController extends Controller
     public function index(Request $request): View
     {
         $clients = Client::query()
+            ->with(['activeWhatsappLink', 'pendingWhatsappLink'])
             ->withCount(['documents', 'whatsappMessages'])
             ->when(! Auth::user()->isAdmin(), fn ($query) => $query->where('user_id', Auth::id()))
             ->when($request->filled('status'), fn ($query) => $query->where('status', $request->string('status')))
@@ -56,6 +59,9 @@ class ClientController extends Controller
         $this->authorizeClient($client);
 
         $client->load([
+            'user',
+            'activeWhatsappLink',
+            'pendingWhatsappLink',
             'documents' => fn ($query) => $query->latest('received_at'),
             'whatsappMessages' => fn ($query) => $query->latest('message_at')->take(20),
         ]);
@@ -89,6 +95,77 @@ class ClientController extends Controller
         $client->delete();
 
         return redirect()->route('clients.index')->with('status', 'Cliente removido.');
+    }
+
+    public function activateWhatsapp(Client $client, EvolutionApiService $evolution): RedirectResponse
+    {
+        $this->authorizeClient($client);
+
+        $client->loadMissing('user');
+
+        $normalized = Client::normalizePhone($client->phone);
+        $variants = Client::phoneVariants($normalized);
+
+        if ($normalized === '' || $variants === []) {
+            return redirect()
+                ->route('clients.show', $client)
+                ->withErrors(['phone' => 'Informe um telefone valido para ativar envios deste cliente.']);
+        }
+
+        $existing = ClientWhatsappLink::query()
+            ->whereIn('normalized_phone', $variants)
+            ->whereIn('status', [ClientWhatsappLink::STATUS_PENDING, ClientWhatsappLink::STATUS_ACTIVE])
+            ->first();
+
+        if ($existing && ($existing->client_id !== $client->id || $existing->user_id !== $client->user_id)) {
+            return redirect()
+                ->route('clients.show', $client)
+                ->withErrors(['phone' => 'Este telefone ja possui ativacao pendente ou ativa em outro cliente/escritorio.']);
+        }
+
+        if ($existing?->status === ClientWhatsappLink::STATUS_ACTIVE) {
+            return redirect()
+                ->route('clients.show', $client)
+                ->with('status', 'Envios deste cliente ja estao ativos.');
+        }
+
+        $message = 'O Escritorio '.$client->user->name.' deseja cadastrar voce para envio de documentos. Para aceitar, responda Sim.';
+
+        try {
+            $result = $evolution->sendText($normalized, $message);
+
+            $link = $existing ?: new ClientWhatsappLink([
+                'user_id' => $client->user_id,
+                'client_id' => $client->id,
+                'phone' => $client->phone,
+                'normalized_phone' => $normalized,
+                'status' => ClientWhatsappLink::STATUS_PENDING,
+                'requested_at' => now(),
+            ]);
+
+            $link->fill([
+                'phone' => $client->phone,
+                'normalized_phone' => $normalized,
+                'status' => ClientWhatsappLink::STATUS_PENDING,
+                'last_invite_sent_at' => now(),
+                'metadata' => array_merge($link->metadata ?? [], [
+                    'last_invite_message' => $message,
+                    'last_invite_response' => $result,
+                ]),
+            ]);
+
+            if (! $link->requested_at) {
+                $link->requested_at = now();
+            }
+
+            $link->save();
+
+            return redirect()->route('clients.show', $client)->with('status', 'Convite de ativacao enviado ao cliente.');
+        } catch (\Throwable $exception) {
+            return redirect()
+                ->route('clients.show', $client)
+                ->withErrors(['evolution' => $exception->getMessage()]);
+        }
     }
 
     private function validated(Request $request, ?Client $client = null): array

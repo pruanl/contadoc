@@ -48,6 +48,11 @@ class User extends Authenticatable
         return $this->hasMany(Client::class);
     }
 
+    public function clientWhatsappLinks()
+    {
+        return $this->hasMany(ClientWhatsappLink::class);
+    }
+
     public function isAdmin(): bool
     {
         return $this->role === self::ROLE_ADMIN;

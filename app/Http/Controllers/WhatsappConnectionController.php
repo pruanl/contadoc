@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Client;
+use App\Models\WhatsappMessage;
 use App\Models\WhatsappInstance;
 use App\Services\EvolutionApiService;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 
@@ -86,6 +89,49 @@ class WhatsappConnectionController extends Controller
             return redirect()->route('whatsapp.show')->with('status', 'Webhook configurado na Evolution.');
         } catch (\Throwable $exception) {
             return redirect()->route('whatsapp.show')->withErrors(['evolution' => $exception->getMessage()]);
+        }
+    }
+
+    public function send(Request $request, EvolutionApiService $evolution): RedirectResponse
+    {
+        $data = $request->validate([
+            'number' => ['required', 'string', 'max:32'],
+            'text' => ['required', 'string', 'max:4000'],
+        ]);
+
+        $number = Client::normalizePhone($data['number']);
+
+        if ($number === '') {
+            return redirect()
+                ->route('whatsapp.show')
+                ->withInput()
+                ->withErrors(['number' => 'Informe um telefone com DDI e DDD.']);
+        }
+
+        $instance = WhatsappInstance::firstOrCreate(
+            ['name' => config('services.evolution.instance')],
+            ['user_id' => Auth::id(), 'status' => 'disconnected'],
+        );
+
+        try {
+            $result = $evolution->sendText($number, $data['text'], $instance->name);
+
+            WhatsappMessage::create([
+                'user_id' => Auth::id(),
+                'remote_phone' => $number,
+                'remote_jid' => data_get($result, 'key.remoteJid', $number.'@s.whatsapp.net'),
+                'direction' => 'outgoing',
+                'body' => $data['text'],
+                'payload' => $result,
+                'message_at' => now(),
+            ]);
+
+            return redirect()->route('whatsapp.show')->with('status', 'Mensagem enviada pela Evolution.');
+        } catch (\Throwable $exception) {
+            return redirect()
+                ->route('whatsapp.show')
+                ->withInput()
+                ->withErrors(['evolution' => $exception->getMessage()]);
         }
     }
 }

@@ -29,6 +29,7 @@ Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
     Route::view('/como-enviar', 'send-instructions')->name('send-instructions');
+    Route::post('/clients/{client}/activate-whatsapp', [ClientController::class, 'activateWhatsapp'])->name('clients.activate-whatsapp');
     Route::resource('clients', ClientController::class);
     Route::resource('authorized-senders', AuthorizedSenderController::class)->except(['show']);
     Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->name('documents.file');
@@ -37,6 +38,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/whatsapp', [WhatsappConnectionController::class, 'show'])->middleware('can:admin')->name('whatsapp.show');
     Route::post('/whatsapp/qr', [WhatsappConnectionController::class, 'qr'])->middleware('can:admin')->name('whatsapp.qr');
     Route::post('/whatsapp/webhook', [WhatsappConnectionController::class, 'configureWebhook'])->middleware('can:admin')->name('whatsapp.webhook');
+    Route::post('/whatsapp/send', [WhatsappConnectionController::class, 'send'])->middleware('can:admin')->name('whatsapp.send');
     Route::resource('admin/users', UserController::class)->middleware('can:admin')->names('admin.users')->except(['show']);
 });
 

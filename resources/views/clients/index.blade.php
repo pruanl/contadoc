@@ -19,12 +19,23 @@
                     <th class="px-4 py-3 font-medium">Cliente</th>
                     <th class="px-4 py-3 font-medium">Telefone</th>
                     <th class="px-4 py-3 font-medium">Status</th>
+                    <th class="px-4 py-3 font-medium">Envio direto</th>
                     <th class="px-4 py-3 font-medium">Docs</th>
                     <th class="px-4 py-3"></th>
                 </tr>
             </thead>
             <tbody>
                 @forelse ($clients as $client)
+                    @php
+                        $whatsappLink = $client->activeWhatsappLink ?? $client->pendingWhatsappLink;
+                        $whatsappStatus = $whatsappLink?->status ?? 'inactive';
+                        $whatsappStatusLabel = [
+                            'active' => 'Ativo',
+                            'pending' => 'Convite enviado',
+                            'revoked' => 'Revogado',
+                            'inactive' => 'Nao ativado',
+                        ][$whatsappStatus] ?? $whatsappStatus;
+                    @endphp
                     <tr class="{{ $client->status === 'pending' ? 'bg-amber-50/50' : '' }}">
                         <td class="px-4 py-3">
                             <p class="font-medium">{{ $client->name }}</p>
@@ -32,13 +43,14 @@
                         </td>
                         <td class="px-4 py-3">{{ $client->phone }}</td>
                         <td class="px-4 py-3"><x-status-badge :status="$client->status" /></td>
+                        <td class="px-4 py-3"><x-status-badge :status="$whatsappStatus">{{ $whatsappStatusLabel }}</x-status-badge></td>
                         <td class="px-4 py-3">{{ $client->documents_count }}</td>
                         <td class="px-4 py-3 text-right">
                             <a href="{{ route('clients.show', $client) }}" class="font-medium underline">Abrir</a>
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="5" class="px-4 py-8 text-center ui-muted">Nenhum cliente cadastrado.</td></tr>
+                    <tr><td colspan="6" class="px-4 py-8 text-center ui-muted">Nenhum cliente cadastrado.</td></tr>
                 @endforelse
             </tbody>
         </table>

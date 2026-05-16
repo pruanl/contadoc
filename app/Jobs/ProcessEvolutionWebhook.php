@@ -4,7 +4,9 @@ namespace App\Jobs;
 
 use App\Models\Client;
 use App\Models\AuthorizedSender;
+use App\Models\ClientWhatsappLink;
 use App\Models\Document;
+use App\Models\User;
 use App\Models\WebhookEvent;
 use App\Models\WhatsappMessage;
 use App\Services\EvolutionApiService;
@@ -14,6 +16,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 class ProcessEvolutionWebhook implements ShouldQueue
@@ -73,18 +76,7 @@ class ProcessEvolutionWebhook implements ShouldQueue
                 ->first();
 
             if (! $sender) {
-                $this->webhookEvent->update([
-                    'status' => 'ignored',
-                    'error' => 'Sender phone is not authorized: '.$phone,
-                    'processed_at' => now(),
-                ]);
-
-                $this->debugLog('warning', 'Webhook ignored: sender not authorized.', [
-                    'webhook_event_id' => $this->webhookEvent->id,
-                    'normalized_phone' => $phone,
-                    'phone_variants' => $phoneVariants,
-                ]);
-
+                $this->processClientMessage($evolution, $payload, $messagePayload, $remoteJid, $phone, $phoneVariants, $body);
                 return;
             }
 
@@ -111,7 +103,18 @@ class ProcessEvolutionWebhook implements ShouldQueue
             ]);
 
             if ($media = $this->media($payload, $messagePayload)) {
-                $this->storeDocument($client, $message, $media, $evolution, $sender, $clientHint, $matchConfidence, $payload);
+                $this->storeDocument(
+                    client: $client,
+                    message: $message,
+                    media: $media,
+                    evolution: $evolution,
+                    owner: $sender->user,
+                    origin: 'official_whatsapp',
+                    senderPhone: $sender->normalized_phone,
+                    clientHint: $clientHint,
+                    matchConfidence: $matchConfidence,
+                    payload: $payload,
+                );
             } else {
                 $this->debugLog('info', 'Webhook message has no media.', [
                     'webhook_event_id' => $this->webhookEvent->id,
@@ -144,6 +147,111 @@ class ProcessEvolutionWebhook implements ShouldQueue
 
             throw $exception;
         }
+    }
+
+    private function processClientMessage(EvolutionApiService $evolution, array $payload, array $messagePayload, ?string $remoteJid, string $phone, array $phoneVariants, ?string $body): void
+    {
+        $pendingLink = ClientWhatsappLink::query()
+            ->with(['client', 'user'])
+            ->whereIn('normalized_phone', $phoneVariants)
+            ->where('status', ClientWhatsappLink::STATUS_PENDING)
+            ->first();
+
+        if ($pendingLink && $this->isAcceptance($body)) {
+            $pendingLink->activate();
+
+            WhatsappMessage::create([
+                'client_id' => $pendingLink->client_id,
+                'user_id' => $pendingLink->user_id,
+                'remote_phone' => $phone,
+                'remote_jid' => $remoteJid,
+                'direction' => 'incoming',
+                'body' => $body,
+                'payload' => $payload,
+                'message_at' => $this->messageAt($payload, $messagePayload),
+            ]);
+
+            $this->webhookEvent->update([
+                'status' => 'processed',
+                'error' => null,
+                'processed_at' => now(),
+            ]);
+
+            $this->debugLog('info', 'Client WhatsApp link accepted.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'client_whatsapp_link_id' => $pendingLink->id,
+                'client_id' => $pendingLink->client_id,
+                'user_id' => $pendingLink->user_id,
+            ]);
+
+            return;
+        }
+
+        $activeLink = ClientWhatsappLink::query()
+            ->with(['client', 'user'])
+            ->whereIn('normalized_phone', $phoneVariants)
+            ->where('status', ClientWhatsappLink::STATUS_ACTIVE)
+            ->first();
+
+        if (! $activeLink) {
+            $this->webhookEvent->update([
+                'status' => 'ignored',
+                'error' => 'Sender phone is not authorized or linked: '.$phone,
+                'processed_at' => now(),
+            ]);
+
+            $this->debugLog('warning', 'Webhook ignored: sender not authorized or linked.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'normalized_phone' => $phone,
+                'phone_variants' => $phoneVariants,
+                'has_pending_link' => (bool) $pendingLink,
+            ]);
+
+            return;
+        }
+
+        $message = WhatsappMessage::create([
+            'client_id' => $activeLink->client_id,
+            'user_id' => $activeLink->user_id,
+            'remote_phone' => $phone,
+            'remote_jid' => $remoteJid,
+            'direction' => $this->fromMe($payload, $messagePayload) ? 'outgoing' : 'incoming',
+            'body' => $body,
+            'payload' => $payload,
+            'message_at' => $this->messageAt($payload, $messagePayload),
+        ]);
+
+        if ($media = $this->media($payload, $messagePayload)) {
+            $this->storeDocument(
+                client: $activeLink->client,
+                message: $message,
+                media: $media,
+                evolution: $evolution,
+                owner: $activeLink->user,
+                origin: 'client_whatsapp',
+                senderPhone: $activeLink->normalized_phone,
+                clientHint: $activeLink->client->name,
+                matchConfidence: 100,
+                payload: $payload,
+            );
+        } else {
+            $this->debugLog('info', 'Linked client message has no media.', [
+                'webhook_event_id' => $this->webhookEvent->id,
+                'whatsapp_message_id' => $message->id,
+            ]);
+        }
+
+        $this->webhookEvent->update([
+            'status' => 'processed',
+            'error' => null,
+            'processed_at' => now(),
+        ]);
+
+        $this->debugLog('info', 'Linked client webhook processed.', [
+            'webhook_event_id' => $this->webhookEvent->id,
+            'client_whatsapp_link_id' => $activeLink->id,
+            'whatsapp_message_id' => $message->id,
+        ]);
     }
 
     private function messagePayload(array $payload): array
@@ -256,7 +364,7 @@ class ProcessEvolutionWebhook implements ShouldQueue
         return is_array($media) ? $media : null;
     }
 
-    private function storeDocument(?Client $client, WhatsappMessage $message, array $media, EvolutionApiService $evolution, AuthorizedSender $sender, ?string $clientHint, ?float $matchConfidence, array $payload): void
+    private function storeDocument(?Client $client, WhatsappMessage $message, array $media, EvolutionApiService $evolution, User $owner, string $origin, string $senderPhone, ?string $clientHint, ?float $matchConfidence, array $payload): void
     {
         $mediaResult = null;
         $mime = $media['mimetype'] ?? $media['mimeType'] ?? null;
@@ -290,22 +398,22 @@ class ProcessEvolutionWebhook implements ShouldQueue
         $size = $this->mediaSize($media) ?? $mediaResult['size'] ?? null;
 
         if ($binary !== null && $binary !== false) {
-            $path = Document::storagePathFor($sender->user, $name);
+            $path = Document::storagePathFor($owner, $name);
             Storage::disk(Document::storageDiskName())->put($path, $binary);
             $size = strlen($binary);
         }
 
         $document = Document::create([
             'client_id' => $client?->id,
-            'user_id' => $sender->user_id,
+            'user_id' => $owner->id,
             'whatsapp_message_id' => $message->id,
             'file_path' => $path,
             'original_name' => $name,
             'mime_type' => $mime,
             'size' => $size,
             'status' => $client ? 'new' : 'pending',
-            'origin' => 'official_whatsapp',
-            'sender_phone' => $sender->normalized_phone,
+            'origin' => $origin,
+            'sender_phone' => $senderPhone,
             'client_hint' => $clientHint,
             'match_confidence' => $matchConfidence,
             'received_at' => $message->message_at ?? now(),
@@ -417,6 +525,26 @@ class ProcessEvolutionWebhook implements ShouldQueue
         }
 
         return null;
+    }
+
+    private function isAcceptance(?string $body): bool
+    {
+        if (! $body) {
+            return false;
+        }
+
+        $normalized = Str::of($body)
+            ->ascii()
+            ->lower()
+            ->trim()
+            ->before("\n")
+            ->before('.')
+            ->before('!')
+            ->before('?')
+            ->trim()
+            ->toString();
+
+        return in_array($normalized, ['sim', 's', 'yes'], true);
     }
 
     private function debugLog(string $level, string $message, array $context = []): void
