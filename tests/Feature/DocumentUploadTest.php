@@ -35,8 +35,8 @@ class DocumentUploadTest extends TestCase
         $this->assertSame($user->id, $document->user_id);
         $this->assertSame('pending', $document->status);
         $this->assertSame('manual', $document->origin);
-        $this->assertNotNull($user->fresh()->storage_folder);
-        $this->assertStringStartsWith('users/'.$user->fresh()->storage_folder.'/documents/', $document->file_path);
+        $this->assertTrue(Str::isUuid($document->uuid));
+        $this->assertStringStartsWith('users/'.$user->storageFolder().'/documents/', $document->file_path);
         $this->assertTrue(Str::isUuid(pathinfo($document->file_path, PATHINFO_FILENAME)));
         $this->assertSame('pdf', pathinfo($document->file_path, PATHINFO_EXTENSION));
         Storage::disk('local')->assertExists($document->file_path);

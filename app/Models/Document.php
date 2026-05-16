@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
 #[Fillable([
+    'uuid',
     'client_id',
     'user_id',
     'whatsapp_message_id',
@@ -24,11 +25,23 @@ use Illuminate\Support\Str;
 ])]
 class Document extends Model
 {
+    protected static function booted(): void
+    {
+        static::creating(function (Document $document): void {
+            $document->uuid ??= (string) Str::uuid();
+        });
+    }
+
     protected function casts(): array
     {
         return [
             'received_at' => 'datetime',
         ];
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'uuid';
     }
 
     public function client(): BelongsTo
