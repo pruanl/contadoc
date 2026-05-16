@@ -50,7 +50,8 @@ class DocumentController extends Controller
 
         $file = $request->file('file');
         $clientId = filled($data['client_id'] ?? null) ? (int) $data['client_id'] : null;
-        $path = $file->store($clientId ? 'documents/'.$clientId : 'documents/inbox');
+        $path = Document::storagePathFor(Auth::user(), $file->getClientOriginalName());
+        Storage::disk(Document::storageDiskName())->put($path, $file->getContent());
 
         Document::create([
             'client_id' => $clientId,
@@ -110,7 +111,7 @@ class DocumentController extends Controller
         $this->authorizeDocument($document);
 
         if ($document->file_path) {
-            Storage::disk('local')->delete($document->file_path);
+            Storage::disk(Document::storageDiskName())->delete($document->file_path);
         }
 
         $document->delete();
@@ -122,18 +123,22 @@ class DocumentController extends Controller
     {
         $this->authorizeDocument($document);
 
-        abort_unless($document->file_path && Storage::disk('local')->exists($document->file_path), 404);
+        $disk = Storage::disk(Document::storageDiskName());
 
-        return Storage::disk('local')->download($document->file_path, $document->original_name);
+        abort_unless($document->file_path && $disk->exists($document->file_path), 404);
+
+        return $disk->download($document->file_path, $document->original_name);
     }
 
     public function file(Document $document): StreamedResponse
     {
         $this->authorizeDocument($document);
 
-        abort_unless($document->file_path && Storage::disk('local')->exists($document->file_path), 404);
+        $disk = Storage::disk(Document::storageDiskName());
 
-        $stream = Storage::disk('local')->readStream($document->file_path);
+        abort_unless($document->file_path && $disk->exists($document->file_path), 404);
+
+        $stream = $disk->readStream($document->file_path);
         abort_unless(is_resource($stream), 404);
 
         return response()->stream(function () use ($stream): void {
@@ -141,7 +146,7 @@ class DocumentController extends Controller
             fclose($stream);
         }, 200, [
             'Content-Type' => $this->contentTypeFor($document),
-            'Content-Length' => (string) Storage::disk('local')->size($document->file_path),
+            'Content-Length' => (string) $disk->size($document->file_path),
             'Content-Disposition' => HeaderUtils::makeDisposition(
                 HeaderUtils::DISPOSITION_INLINE,
                 $document->original_name ?: basename($document->file_path)
@@ -165,7 +170,7 @@ class DocumentController extends Controller
 
     private function previewFor(Document $document): ?array
     {
-        if (! $document->file_path || ! Storage::disk('local')->exists($document->file_path)) {
+        if (! $document->file_path || ! Storage::disk(Document::storageDiskName())->exists($document->file_path)) {
             return null;
         }
 
@@ -190,7 +195,7 @@ class DocumentController extends Controller
     private function contentTypeFor(Document $document): string
     {
         return $document->mime_type
-            ?: (Storage::disk('local')->mimeType($document->file_path) ?: 'application/octet-stream');
+            ?: (Storage::disk(Document::storageDiskName())->mimeType($document->file_path) ?: 'application/octet-stream');
     }
 
     private function extensionFor(Document $document): string

@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class DocumentUploadTest extends TestCase
@@ -34,7 +35,10 @@ class DocumentUploadTest extends TestCase
         $this->assertSame($user->id, $document->user_id);
         $this->assertSame('pending', $document->status);
         $this->assertSame('manual', $document->origin);
-        $this->assertStringStartsWith('documents/inbox/', $document->file_path);
+        $this->assertNotNull($user->fresh()->storage_folder);
+        $this->assertStringStartsWith('users/'.$user->fresh()->storage_folder.'/documents/', $document->file_path);
+        $this->assertTrue(Str::isUuid(pathinfo($document->file_path, PATHINFO_FILENAME)));
+        $this->assertSame('pdf', pathinfo($document->file_path, PATHINFO_EXTENSION));
         Storage::disk('local')->assertExists($document->file_path);
     }
 
@@ -43,11 +47,12 @@ class DocumentUploadTest extends TestCase
         Storage::fake('local');
 
         $user = User::factory()->create();
-        Storage::disk('local')->put('documents/inbox/sample.jpg', 'image-bytes');
+        $path = Document::storagePathFor($user, 'sample.jpg');
+        Storage::disk('local')->put($path, 'image-bytes');
 
         $document = Document::create([
             'user_id' => $user->id,
-            'file_path' => 'documents/inbox/sample.jpg',
+            'file_path' => $path,
             'original_name' => 'sample.jpg',
             'mime_type' => 'image/jpeg',
             'size' => 11,

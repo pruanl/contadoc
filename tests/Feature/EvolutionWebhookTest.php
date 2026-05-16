@@ -12,6 +12,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class EvolutionWebhookTest extends TestCase
@@ -96,6 +97,9 @@ class EvolutionWebhookTest extends TestCase
         $this->assertSame($user->id, $document->user_id);
         $this->assertSame('pending', $document->status);
         $this->assertSame('Cliente Inexistente', $document->client_hint);
+        $this->assertStringStartsWith('users/'.$user->fresh()->storage_folder.'/documents/', $document->file_path);
+        $this->assertTrue(Str::isUuid(pathinfo($document->file_path, PATHINFO_FILENAME)));
+        $this->assertSame('pdf', pathinfo($document->file_path, PATHINFO_EXTENSION));
         Storage::disk('local')->assertExists($document->file_path);
     }
 
@@ -197,7 +201,9 @@ class EvolutionWebhookTest extends TestCase
         $this->assertNotNull($document);
         $this->assertNotNull($document->file_path);
         $this->assertSame('foto-recebida.jpg', $document->original_name);
+        $this->assertStringStartsWith('users/'.$user->fresh()->storage_folder.'/documents/', $document->file_path);
         $this->assertStringEndsWith('.jpg', $document->file_path);
+        $this->assertTrue(Str::isUuid(pathinfo($document->file_path, PATHINFO_FILENAME)));
         $this->assertSame('image/jpeg', $document->mime_type);
         $this->assertSame(strlen('decoded-image'), $document->size);
         Storage::disk('local')->assertExists($document->file_path);

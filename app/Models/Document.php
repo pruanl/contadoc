@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Str;
 
 #[Fillable([
     'client_id',
@@ -43,5 +44,37 @@ class Document extends Model
     public function whatsappMessage(): BelongsTo
     {
         return $this->belongsTo(WhatsappMessage::class);
+    }
+
+    public static function storageDiskName(): string
+    {
+        return config('filesystems.documents_disk', config('filesystems.default', 'local'));
+    }
+
+    public static function storagePathFor(User $user, ?string $sourceNameOrExtension = null): string
+    {
+        $extension = static::extensionFrom($sourceNameOrExtension);
+        $fileName = (string) Str::uuid();
+
+        if ($extension !== '') {
+            $fileName .= '.'.$extension;
+        }
+
+        return 'users/'.$user->storageFolder().'/documents/'.$fileName;
+    }
+
+    private static function extensionFrom(?string $sourceNameOrExtension): string
+    {
+        if (! $sourceNameOrExtension) {
+            return '';
+        }
+
+        $extension = pathinfo($sourceNameOrExtension, PATHINFO_EXTENSION) ?: $sourceNameOrExtension;
+
+        return str($extension)
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/', '')
+            ->limit(12, '')
+            ->toString();
     }
 }

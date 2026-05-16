@@ -290,9 +290,8 @@ class ProcessEvolutionWebhook implements ShouldQueue
         $size = $this->mediaSize($media) ?? $mediaResult['size'] ?? null;
 
         if ($binary !== null && $binary !== false) {
-            $folder = $client?->id ? 'documents/'.$client->id : 'documents/inbox';
-            $path = $folder.'/'.uniqid('', true).'-'.$name;
-            Storage::disk('local')->put($path, $binary);
+            $path = Document::storagePathFor($sender->user, $name);
+            Storage::disk(Document::storageDiskName())->put($path, $binary);
             $size = strlen($binary);
         }
 
@@ -318,7 +317,8 @@ class ProcessEvolutionWebhook implements ShouldQueue
             'client_id' => $document->client_id,
             'user_id' => $document->user_id,
             'file_path' => $document->file_path,
-            'file_exists' => $document->file_path ? Storage::disk('local')->exists($document->file_path) : false,
+            'storage_disk' => Document::storageDiskName(),
+            'file_exists' => $document->file_path ? Storage::disk(Document::storageDiskName())->exists($document->file_path) : false,
             'original_name' => $document->original_name,
             'mime_type' => $document->mime_type,
             'size' => $document->size,

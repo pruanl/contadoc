@@ -9,8 +9,9 @@ use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Str;
 
-#[Fillable(['name', 'email', 'password', 'role', 'plan'])]
+#[Fillable(['name', 'email', 'password', 'role', 'plan', 'storage_folder'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
@@ -32,6 +33,13 @@ class User extends Authenticatable
 
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
+
+    protected static function booted(): void
+    {
+        static::creating(function (User $user): void {
+            $user->storage_folder ??= (string) Str::uuid();
+        });
+    }
 
     public function whatsappInstances()
     {
@@ -56,6 +64,17 @@ class User extends Authenticatable
     public function authorizedSenderLimit(): int
     {
         return self::PLAN_LIMITS[$this->plan] ?? self::PLAN_LIMITS[self::PLAN_STARTER];
+    }
+
+    public function storageFolder(): string
+    {
+        if ($this->storage_folder) {
+            return $this->storage_folder;
+        }
+
+        $this->forceFill(['storage_folder' => (string) Str::uuid()])->save();
+
+        return $this->storage_folder;
     }
 
     /**
